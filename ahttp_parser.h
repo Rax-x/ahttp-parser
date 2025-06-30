@@ -14,35 +14,6 @@ enum http_method {
     HTTP_DELETE
 };
 
-struct http_header {
-    char* name;
-    char* value;
-
-    struct http_header* next;
-};
-
-struct http_request {
-    enum http_method method;
-
-    uint8_t major_version;
-    uint8_t minor_version;
-
-    struct http_header* headers;
-
-    char* body;
-};
-
-struct http_response {
-    int status;
-
-    uint8_t major_version;
-    uint8_t minor_version;
-
-    struct http_header* headers;
-
-    char* body;
-};
-
 enum http_parser_state {
     PARSER_START,
 
@@ -75,11 +46,15 @@ enum http_parser_state {
 
     PARSER_BODY_START,
     PARSER_BODY,
-    PARSER_BODY_END,
 
     PARSER_ERROR,
     PARSER_END,
 };
+
+struct http_parser;
+
+typedef void (*ahttp_event_cb)(struct http_parser*);
+typedef void (*ahttp_data_cb)(struct http_parser*, const char* at, int length);
 
 struct http_parser {
     const char* source;
@@ -90,14 +65,36 @@ struct http_parser {
 
     enum http_parser_state current_state;
     enum http_parser_state prev_state;
+
+    ahttp_event_cb on_header;
+    ahttp_event_cb on_headers_done;
+
+    ahttp_data_cb on_header_name;
+    ahttp_data_cb on_header_value;
+    ahttp_data_cb on_body;
+
+    short int http_major;
+    short int http_minor;
+    short int status;
+
+    unsigned int error: 1;
+
+    void* data;
 };
 
-struct http_parser http_parser_init(const char* source, int length);
+int http_parser_minor_version(struct http_parser* parser);
+int http_parser_major_version(struct http_parser* parser);
 
-struct http_response* parse_response(struct http_parser* parser);
+struct http_parser http_parser_init(const char* source, 
+                                    int length,
+                                    void* data,
+                                    ahttp_event_cb on_header,
+                                    ahttp_data_cb on_header_name,
+                                    ahttp_data_cb on_header_value,
+                                    ahttp_event_cb on_headers_done,
+                                    ahttp_data_cb on_body);
 
-void destroy_http_request(struct http_request* request);
-void destroy_http_response(struct http_response* response);
+int http_parser_run(struct http_parser* parser);
 
 #ifdef __cplusplus
 }

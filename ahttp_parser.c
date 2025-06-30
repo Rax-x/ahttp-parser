@@ -5,58 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static struct http_header* new_header() {
-    
-    struct http_header* header = (struct http_header*)malloc(sizeof(*header));
-    if(header == NULL) {
-        return NULL;
-    }
+struct http_parser http_parser_init(const char* source, 
+                                    int length,
+                                    void* data,
+                                    ahttp_event_cb on_headers,
+                                    ahttp_data_cb on_header_name,
+                                    ahttp_data_cb on_header_value,
+                                    ahttp_event_cb on_headers_done,
+                                    ahttp_data_cb on_body) {
 
-    header->name = NULL;
-    header->value = NULL;
-    header->next = NULL;
-
-    return header;
-}
-
-static void destroy_http_header(struct http_header* header) {
-
-    if(header == NULL) return;
-
-    free(header->name);
-    free(header->value);
-    free(header);
-}
-
-static void destroy_header_list(struct http_header* headers) {
-
-    struct http_header* current = headers;
-    struct http_header* header = NULL;
-
-    while(current != NULL) {
-        
-        header = current;
-        current = current->next;
-
-        destroy_http_header(header);
-    }
-}
-
-void destroy_http_request(struct http_request* request) {
-    destroy_header_list(request->headers);
-    free(request->body);
-
-    free(request);
-}
-
-void destroy_http_response(struct http_response* response) {
-    destroy_header_list(response->headers);
-    free(response->body);
-
-    free(response);
-}
-
-struct http_parser http_parser_init(const char* source, int length) {
     struct http_parser parser;
 
     parser.source = source;
@@ -64,6 +21,18 @@ struct http_parser http_parser_init(const char* source, int length) {
 
     parser.curr = source;
     parser.current_state = PARSER_START;
+
+    parser.http_major = 0;
+    parser.http_minor = 0;
+
+    parser.on_header = on_headers;
+    parser.on_header_name = on_header_name;
+    parser.on_header_value = on_header_value;
+    parser.on_headers_done = on_headers_done;
+    parser.on_body = on_body;
+
+    parser.data = data;
+    parser.error = 0;
 
     return parser;
 }
@@ -138,45 +107,23 @@ static void parse_string(struct http_parser* parser, int allow_all) {
     }
 }
 
-static char* allocate_string(struct http_parser* parser) {
+#define SET_ERROR(p) ((p)->error = 1,                           \
+                      update_parser_state((p), PARSER_ERROR))
 
-    const char* end = parser->curr;
-    const char* start = parser->start;
+#define MARK_START(parser) (parser->start = parser->curr)
+#define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
-    const int length = (int)(end - start);
-
-    char* string = (char*)malloc(sizeof(*string) * length + 1);
-    if(string == NULL) {
-        return NULL;
-    }
-
-    memcpy(string, start, length);
-    string[length] = '\0';
-
-    return string;
-}
-
-struct http_response* parse_response(struct http_parser* parser) {
-
-    struct http_response* response = NULL;
+int http_parser_run(struct http_parser* parser) {
 
     while (parser->current_state != PARSER_END) {
 
         switch (parser->current_state) {
             case PARSER_START:
-                response = (struct http_response*)malloc(sizeof(*response));
-
-                if(response == NULL) {
-                    update_parser_state(parser, PARSER_ERROR);
-                } else {
-                    update_parser_state(parser, PARSER_HTTP);
-                }
-
+                update_parser_state(parser, PARSER_HTTP);
                 break;
             case PARSER_SP:
                 
-                if(isspace(peek(parser))) {
-                    next_char(parser);
+                if(match(parser, ' ')) {
 
                     enum http_parser_state next_state;
 
@@ -200,7 +147,7 @@ struct http_response* parse_response(struct http_parser* parser) {
 
                     update_parser_state(parser, next_state);
                 } else {
-                    update_parser_state(parser, PARSER_ERROR);
+                    SET_ERROR(parser);
                 }
 
                 break;
@@ -225,7 +172,7 @@ struct http_response* parse_response(struct http_parser* parser) {
 
                     update_parser_state(parser, next_state);
                 } else {
-                    update_parser_state(parser, PARSER_ERROR);
+                    SET_ERROR(parser);
                 }
                 break;
             case PARSER_HTTP:
@@ -233,7 +180,7 @@ struct http_response* parse_response(struct http_parser* parser) {
                 if(match_chars(parser, "HTTP")) {
                     update_parser_state(parser, PARSER_HTTP_SLASH);
                 } else {
-                    update_parser_state(parser, PARSER_ERROR);
+                    SET_ERROR(parser);
                 }
 
                 break;
@@ -243,7 +190,7 @@ struct http_response* parse_response(struct http_parser* parser) {
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MAJOR:
-                response->major_version = parse_integer(parser); // TODO: error checking
+                parser->http_major = parse_integer(parser); // TODO: error checking
                 update_parser_state(parser, PARSER_HTTP_DOT);
                 break;
             case PARSER_HTTP_DOT:
@@ -252,11 +199,11 @@ struct http_response* parse_response(struct http_parser* parser) {
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MINOR:
-                response->minor_version = parse_integer(parser); // TODO: error checking
+                parser->http_minor = parse_integer(parser); // TODO: error checking
                 update_parser_state(parser, PARSER_SP);
                 break;
             case PARSER_RES_STATUS:
-                response->status = parse_integer(parser); // TODO: error checking
+                parser->status = parse_integer(parser); // TODO: error checking
                 update_parser_state(parser, PARSER_SP);
                 break;
             case PARSER_RES_REASON:
@@ -282,23 +229,15 @@ struct http_response* parse_response(struct http_parser* parser) {
                     break;
                 }
 
-                struct http_header* header = new_header();
-
-                if(header == NULL) {
-                    update_parser_state(parser, PARSER_ERROR);
-                    break;
+                if(parser->on_header != NULL) {
+                    parser->on_header(parser);
                 }
-
-
-                // TODO: the headers will be saved in reversed order
-                header->next = response->headers;
-                response->headers = header;
 
                 update_parser_state(parser, PARSER_HEADER_NAME_START);
                 break;
             }
             case PARSER_HEADER_NAME_START:
-                parser->start = parser->curr;
+                MARK_START(parser);
                 update_parser_state(parser, PARSER_HEADER_NAME);
                 break;
             case PARSER_HEADER_NAME:
@@ -307,14 +246,12 @@ struct http_response* parse_response(struct http_parser* parser) {
                 break;
             case PARSER_HEADER_NAME_END: {
 
-                char* name = allocate_string(parser);
-
-                if(name == NULL) {
-                    update_parser_state(parser, PARSER_ERROR);
-                } else {
-                    response->headers->name = name;
+                const int header_name_length = CALC_DATA_LENGTH(parser);
+                
+                if(parser->on_header_name != NULL) {
+                    parser->on_header_name(parser, parser->start, header_name_length);
                 }
-
+                
                 update_parser_state(parser, PARSER_HEADER_COLON);
                 break;
             }
@@ -329,13 +266,12 @@ struct http_response* parse_response(struct http_parser* parser) {
                     next_char(parser);
                 }
 
-                parser->start = parser->curr;
+                MARK_START(parser);
                 update_parser_state(parser, is_at_end(parser) 
                                     ? PARSER_ERROR 
                                     : PARSER_HEADER_VALUE);
                 break;
             case PARSER_HEADER_VALUE:
-                
                 parse_string(parser, 1);
                 update_parser_state(parser, PARSER_HEADER_VALUE_LWS);
                 break;
@@ -348,48 +284,41 @@ struct http_response* parse_response(struct http_parser* parser) {
                         update_parser_state(parser, PARSER_HEADER_VALUE_END);
                     }
                 } else {
-                    update_parser_state(parser, PARSER_ERROR);
+                    SET_ERROR(parser);
                 }
 
                 break;
             }
             case PARSER_HEADER_VALUE_END: {
 
-                char* value = allocate_string(parser);
+                const int header_value_length = CALC_DATA_LENGTH(parser) - 2; // REMOVE \r\n
 
-                if(value == NULL) {
-                    update_parser_state(parser, PARSER_ERROR);
-                } else {
-                    response->headers->value = value;
+                if(parser->on_header_value != NULL) {
+                    parser->on_header_value(parser, parser->start, header_value_length);
                 }
 
                 update_parser_state(parser, PARSER_HEADER_START);
                 break;
             }
             case PARSER_HEADERS_DONE:
+
+                if(parser->on_headers_done != NULL) {
+                    parser->on_headers_done(parser);
+                }
+
                 update_parser_state(parser, PARSER_CRLF);
                 break;
             case PARSER_BODY_START:
+                MARK_START(parser);
                 update_parser_state(parser, PARSER_BODY);
                 break;
-            case PARSER_BODY:
+            case PARSER_BODY: {
 
-                parser->start = parser->curr;
+                const int body_length = parser->length - (int)(parser->start - parser->source);
+                parser->curr += body_length; // it reaches the end of the buffer
 
-                while(!is_at_end(parser)) {
-                    next_char(parser);
-                }
-
-                update_parser_state(parser, PARSER_BODY_END);
-                break;
-            case PARSER_BODY_END: {
-
-                char* body = allocate_string(parser);
-
-                if(body == NULL) {
-                    update_parser_state(parser, PARSER_ERROR);
-                } else {
-                    response->body = body;
+                if(parser->on_body != NULL) {
+                    parser->on_body(parser, parser->start, body_length);
                 }
 
                 update_parser_state(parser, PARSER_END);
@@ -397,11 +326,6 @@ struct http_response* parse_response(struct http_parser* parser) {
             }
             case PARSER_ERROR:
                 fprintf(stderr, "An error occurred!\n");
-                if(response != NULL) {
-                    destroy_http_response(response);
-                    response = NULL;
-                }
-
                 update_parser_state(parser, PARSER_END);
                 break;
             case PARSER_END:
@@ -409,5 +333,5 @@ struct http_response* parse_response(struct http_parser* parser) {
         }
     }
    
-   return response;
+    return (int)(parser->curr - parser->source);
 }

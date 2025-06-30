@@ -55,29 +55,115 @@ const char* mock_response =
     "</body>\n"
     "</html>\n";
 
-int main() {
+struct http_header {
+    char* name;
+    char* value;
 
-    struct http_parser parser = http_parser_init(mock_response, strlen(mock_response));
-    struct http_response* response = parse_response(&parser);
+    struct http_header* next;
+};
 
-    if(response == NULL) {
-        exit(EXIT_FAILURE);
+struct http_header* new_header() {
+    struct http_header* header = (struct http_header*)malloc(sizeof(*header));
+
+    header->name = NULL;
+    header->value = NULL;
+    header->next = NULL;
+
+    return header;
+}
+
+void destroy_header(struct http_header* header) {
+    free(header->name);
+    free(header->value);
+
+    free(header);
+}
+
+struct http_response {
+
+    int major_version;
+    int minor_version;
+    int status;
+
+    struct http_header* headers;
+    char* body;
+};
+
+void destroy_http_response(struct http_response* response) {
+    struct http_header* header = response->headers;
+    struct http_header* temp;
+
+    while(header != NULL) {
+        temp = header;
+        header = header->next;
+
+        destroy_header(temp);
     }
 
-    printf("HTTP/%d.%d %d\n\n",
-        response->major_version, 
-        response->minor_version, 
-        response->status);
+    free(response->body);
+}
 
-    for(struct http_header* header = response->headers;
-        header != NULL;
+void on_new_header(struct http_parser* parser) {
+    struct http_response* response = (struct http_response*)parser->data;
+
+    struct http_header* header = new_header();
+    header->next = response->headers;
+    response->headers = header;
+}
+
+void on_headers_done(struct http_parser* parser) {
+    puts("Headers finished");
+}
+
+void on_header_name(struct http_parser* parser, const char* name, int length) {
+
+    struct http_response* response = (struct http_response*)parser->data;
+
+    response->headers->name = (char*)malloc(sizeof(char) * length + 1);
+    memcpy(response->headers->name, name, length);
+    response->headers->name[length] = '\0';
+}
+
+void on_header_value(struct http_parser* parser, const char* name, int length) {
+
+    struct http_response* response = (struct http_response*)parser->data;
+
+    response->headers->value = (char*)malloc(sizeof(char) * length + 1);
+    memcpy(response->headers->value, name, length);
+    response->headers->value[length] = '\0';
+}
+
+void on_body(struct http_parser* parser, const char* name, int length) {
+    struct http_response* response = (struct http_response*)parser->data;
+
+    response->body = (char*)malloc(sizeof(char) * length + 1);
+    memcpy(response->body, name, length);
+    response->body[length] = '\0';
+}
+
+int main() {
+    
+    struct http_response response = {0};
+
+    struct http_parser parser = http_parser_init(mock_response, 
+                                                 strlen(mock_response), 
+                                                 &response, 
+                                                 on_new_header, 
+                                                 on_header_name, 
+                                                 on_header_value,
+                                                 on_headers_done,
+                                                 on_body);
+
+    http_parser_run(&parser);
+                     
+    puts(response.body);
+    for(struct http_header* header = response.headers; 
+        header != NULL; 
         header = header->next) {
         printf("%s: %s\n", header->name, header->value);
     }
-
-    printf("\n%s", response->body);
-
-    destroy_http_response(response);
+    
+    destroy_http_response(&response);
 
     return 0;
 }
