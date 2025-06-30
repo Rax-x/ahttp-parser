@@ -148,13 +148,14 @@ int main() {
     struct http_parser parser = http_parser_init(mock_response, 
                                                  strlen(mock_response), 
                                                  &response, 
+                                                 NULL,
                                                  on_new_header, 
                                                  on_header_name, 
                                                  on_header_value,
                                                  on_headers_done,
                                                  on_body);
 
-    http_parser_run(&parser);
+    http_parser_run(&parser, HTTP_PARSER_REQUEST);
                      
     puts(response.body);
     for(struct http_header* header = response.headers; 
@@ -163,6 +164,11 @@ int main() {
         printf("%s: %s\n", header->name, header->value);
     }
     
+    printf("Method: %d, major: %d, minor: %d\n",
+           http_parser_method(&parser),
+           http_parser_major_version(&parser),
+           http_parser_minor_version(&parser));
+
     destroy_http_response(&response);
 
     return 0;

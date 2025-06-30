@@ -8,7 +8,8 @@
 struct http_parser http_parser_init(const char* source, 
                                     int length,
                                     void* data,
-                                    ahttp_event_cb on_headers,
+                                    ahttp_data_cb on_req_uri,
+                                    ahttp_event_cb on_header,
                                     ahttp_data_cb on_header_name,
                                     ahttp_data_cb on_header_value,
                                     ahttp_event_cb on_headers_done,
@@ -25,8 +26,13 @@ struct http_parser http_parser_init(const char* source,
     parser.http_major = 0;
     parser.http_minor = 0;
 
-    parser.on_header = on_headers;
-    parser.on_header_name = on_header_name;
+    parser.status = -1;
+    parser.method = HTTP_INVALID;
+
+    
+    parser.on_req_uri = on_req_uri;
+
+    parser.on_header = on_header;
     parser.on_header_value = on_header_value;
     parser.on_headers_done = on_headers_done;
     parser.on_body = on_body;
@@ -37,7 +43,25 @@ struct http_parser http_parser_init(const char* source,
     return parser;
 }
 
-static int is_at_end(struct http_parser* parser) {
+inline int http_parser_minor_version(struct http_parser* parser) {
+    return parser->http_minor;
+}
+
+inline int http_parser_major_version(struct http_parser* parser) {
+    return parser->http_major;
+}
+
+inline short int http_parser_status_code(struct http_parser* parser) {
+    return parser->status;
+}
+
+inline enum http_method http_parser_method(struct http_parser* parser) {
+    return parser->method;
+}
+
+
+
+static inline int is_at_end(struct http_parser* parser) {
     return (parser->curr - parser->source) >= parser->length;
 }
 
@@ -47,7 +71,7 @@ static char next_char(struct http_parser* parser) {
         : '\0';
 }
 
-static char peek(struct http_parser* parser) {
+static inline char peek(struct http_parser* parser) {
     return *parser->curr;
 }
 
@@ -75,9 +99,8 @@ static int match_chars(struct http_parser* parser, const char* chars) {
     return status;
 }
 
-static void update_parser_state(struct http_parser* parser, 
-                                enum http_parser_state state) {
-
+static inline void update_parser_state(struct http_parser* parser, 
+                                       enum http_parser_state state) {
     parser->prev_state = parser->current_state;
     parser->current_state = state;
 }
@@ -89,12 +112,12 @@ static int parse_integer(struct http_parser* parser) {
         number = (number * 10) + (next_char(parser)  - '0');
     }
 
-    // TODO: check if is at the end
+    // TODO(Rax): check if is at the end
 
     return number;
 }
 
-static int is_valid_character(char c, int allow_all) {
+static inline int is_valid_character(char c, int allow_all) {
     return allow_all 
         ? isprint(c)
         : (isalnum(c) || c == '-');
@@ -107,19 +130,21 @@ static void parse_string(struct http_parser* parser, int allow_all) {
     }
 }
 
-#define SET_ERROR(p) ((p)->error = 1,                           \
-                      update_parser_state((p), PARSER_ERROR))
-
+#define SET_ERROR(p) (update_parser_state((p), PARSER_ERROR))
 #define MARK_START(parser) (parser->start = parser->curr)
 #define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
-int http_parser_run(struct http_parser* parser) {
+int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
+
+    const int is_request = (type == HTTP_PARSER_REQUEST);
 
     while (parser->current_state != PARSER_END) {
 
         switch (parser->current_state) {
             case PARSER_START:
-                update_parser_state(parser, PARSER_HTTP);
+                update_parser_state(parser, is_request
+                                    ? PARSER_START_REQ
+                                    : PARSER_START_RES);
                 break;
             case PARSER_SP:
                 
@@ -134,10 +159,16 @@ int http_parser_run(struct http_parser* parser) {
                         case PARSER_RES_STATUS:
                             next_state = PARSER_RES_REASON;
                             break;
+                        case PARSER_REQ_METHOD:
+                            next_state = PARSER_REQ_URI;
+                            break;
+                        case PARSER_REQ_URI:
+                            next_state = PARSER_HTTP;
+                            break;
                         case PARSER_HEADER_VALUE_END:
                             next_state = PARSER_HEADER_START;
                             break;
-                        case PARSER_HEADERS_DONE: // TODO: useless
+                        case PARSER_HEADERS_DONE: // TODO(Rax): useless
                             next_state = PARSER_CRLF;
                             break;
                         default:
@@ -159,6 +190,8 @@ int http_parser_run(struct http_parser* parser) {
                         case PARSER_CRLF:
                             next_state = PARSER_BODY_START;
                             break;
+                        case PARSER_HTTP_MINOR:
+                            // fallthrought
                         case PARSER_RES_REASON:
                             next_state = PARSER_HEADERS;
                             break;
@@ -175,6 +208,12 @@ int http_parser_run(struct http_parser* parser) {
                     SET_ERROR(parser);
                 }
                 break;
+            case PARSER_START_RES:
+                update_parser_state(parser, PARSER_HTTP);
+                break;
+            case PARSER_START_REQ:
+                update_parser_state(parser, PARSER_REQ_METHOD);
+                break;
             case PARSER_HTTP:
 
                 if(match_chars(parser, "HTTP")) {
@@ -190,7 +229,7 @@ int http_parser_run(struct http_parser* parser) {
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MAJOR:
-                parser->http_major = parse_integer(parser); // TODO: error checking
+                parser->http_major = parse_integer(parser); // TODO(Rax): error checking
                 update_parser_state(parser, PARSER_HTTP_DOT);
                 break;
             case PARSER_HTTP_DOT:
@@ -199,11 +238,11 @@ int http_parser_run(struct http_parser* parser) {
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MINOR:
-                parser->http_minor = parse_integer(parser); // TODO: error checking
-                update_parser_state(parser, PARSER_SP);
+                parser->http_minor = parse_integer(parser); // TODO(Rax): error checking
+                update_parser_state(parser, is_request ? PARSER_CRLF : PARSER_SP);
                 break;
             case PARSER_RES_STATUS:
-                parser->status = parse_integer(parser); // TODO: error checking
+                parser->status = parse_integer(parser); // TODO(Rax): error checking
                 update_parser_state(parser, PARSER_SP);
                 break;
             case PARSER_RES_REASON:
@@ -215,9 +254,83 @@ int http_parser_run(struct http_parser* parser) {
                                     ? PARSER_ERROR
                                     : PARSER_CRLF);
                 break;
-            case PARSER_REQ_METHOD:
+            case PARSER_REQ_METHOD: {
+                char c = next_char(parser);
+
+                // TODO(Rax): this could be faster
+
+                switch(c) {
+                    case 'C':
+                        parser->method = match_chars(parser, "ONNECT")
+                            ? HTTP_CONNECT
+                            : HTTP_INVALID;
+                        break;
+                    case 'D':
+                        parser->method = match_chars(parser, "ELETE")
+                            ? HTTP_DELETE
+                            : HTTP_INVALID;
+
+                        break;
+                    case 'G':
+                        parser->method = match_chars(parser, "ET")
+                            ? HTTP_GET
+                            : HTTP_INVALID;
+
+                        break;
+                    case 'H':
+                        parser->method = match_chars(parser, "EAD")
+                            ? HTTP_HEAD
+                            : HTTP_INVALID;
+                        break;
+                    case 'O':
+                        parser->method = match_chars(parser, "PTIONS")
+                            ? HTTP_OPTIONS
+                            : HTTP_INVALID;
+                        break;
+                    case 'P':
+                        c = next_char(parser);
+                        
+                        if(c == 'U') {
+                            parser->method = match(parser, 'T')
+                                ? HTTP_PUT
+                                : HTTP_INVALID;
+                        } else {
+                            parser->method = match_chars(parser, "OST")
+                                ? HTTP_POST
+                                : HTTP_INVALID;
+                        }
+
+                        break;
+                    case 'T':
+                        parser->method = match_chars(parser, "RACE")
+                            ? HTTP_TRACE
+                            : HTTP_INVALID;
+                        break;
+                    default:
+                        parser->method = HTTP_INVALID;
+                        break;
+                }
+
+                if(parser->method != HTTP_INVALID) {
+                    update_parser_state(parser, PARSER_SP);
+                } else {
+                    SET_ERROR(parser);
+                }
+
                 break;
+            }
             case PARSER_REQ_URI:
+
+                MARK_START(parser);
+                while(peek(parser) != ' ') {
+                    next_char(parser);
+                }
+
+                if(parser->on_req_uri != NULL) {
+                    parser->on_req_uri(parser, parser->start, CALC_DATA_LENGTH(parser));
+                }
+
+                update_parser_state(parser, PARSER_SP);
                 break;
             case PARSER_HEADERS:
                 update_parser_state(parser, PARSER_HEADER_START);
@@ -291,7 +404,7 @@ int http_parser_run(struct http_parser* parser) {
             }
             case PARSER_HEADER_VALUE_END: {
 
-                const int header_value_length = CALC_DATA_LENGTH(parser) - 2; // REMOVE \r\n
+                const int header_value_length = CALC_DATA_LENGTH(parser) - 2; // exclude \r\n
 
                 if(parser->on_header_value != NULL) {
                     parser->on_header_value(parser, parser->start, header_value_length);
@@ -326,6 +439,7 @@ int http_parser_run(struct http_parser* parser) {
             }
             case PARSER_ERROR:
                 fprintf(stderr, "An error occurred!\n");
+                parser->error = 1;
                 update_parser_state(parser, PARSER_END);
                 break;
             case PARSER_END:

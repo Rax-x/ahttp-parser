@@ -8,10 +8,16 @@ extern "C" {
 #endif
 
 enum http_method {
+    HTTP_INVALID = -1,
+
+    HTTP_OPTIONS,
     HTTP_GET,
+    HTTP_HEAD,
     HTTP_POST,
     HTTP_PUT,
-    HTTP_DELETE
+    HTTP_DELETE,
+    HTTP_TRACE,
+    HTTP_CONNECT
 };
 
 enum http_parser_state {
@@ -19,6 +25,9 @@ enum http_parser_state {
 
     PARSER_SP,
     PARSER_CRLF,
+
+    PARSER_START_RES,
+    PARSER_START_REQ,
 
     PARSER_HTTP,
     PARSER_HTTP_SLASH,
@@ -56,6 +65,11 @@ struct http_parser;
 typedef void (*ahttp_event_cb)(struct http_parser*);
 typedef void (*ahttp_data_cb)(struct http_parser*, const char* at, int length);
 
+enum http_parser_type {
+    HTTP_PARSER_RESPONSE,
+    HTTP_PARSER_REQUEST
+};
+
 struct http_parser {
     const char* source;
     int length;
@@ -69,13 +83,17 @@ struct http_parser {
     ahttp_event_cb on_header;
     ahttp_event_cb on_headers_done;
 
+    ahttp_data_cb on_req_uri;
+
     ahttp_data_cb on_header_name;
     ahttp_data_cb on_header_value;
     ahttp_data_cb on_body;
 
     short int http_major;
     short int http_minor;
-    short int status;
+
+    short int status; // only response
+    enum http_method method; // only request
 
     unsigned int error: 1;
 
@@ -84,17 +102,21 @@ struct http_parser {
 
 int http_parser_minor_version(struct http_parser* parser);
 int http_parser_major_version(struct http_parser* parser);
+short int http_parser_status_code(struct http_parser* parser);
+enum http_method http_parser_method(struct http_parser* parser);
 
 struct http_parser http_parser_init(const char* source, 
                                     int length,
                                     void* data,
+                                    ahttp_data_cb on_req_uri,
                                     ahttp_event_cb on_header,
                                     ahttp_data_cb on_header_name,
                                     ahttp_data_cb on_header_value,
                                     ahttp_event_cb on_headers_done,
                                     ahttp_data_cb on_body);
 
-int http_parser_run(struct http_parser* parser);
+int http_parser_run(struct http_parser* parser,
+                    enum http_parser_type type);
 
 #ifdef __cplusplus
 }
