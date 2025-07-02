@@ -83,7 +83,7 @@ struct http_parser {
     short int http_major;
     short int http_minor;
 
-    short int status; // only response
+    int status; // only response
     enum http_method method; // only request
 
     unsigned int error: 1;

@@ -85,14 +85,15 @@ static inline void update_parser_state(struct http_parser* parser,
     parser->current_state = state;
 }
 
-static int parse_integer(struct http_parser* parser) {
-    int number = 0;
+static int parse_integer(struct http_parser* parser, int* result) {
+
+    parser->start = parser->curr;
 
     while(isdigit(peek(parser)) && !is_at_end(parser)) {
-        number = (number * 10) + (next_char(parser)  - '0');
+        *result = (*result * 10) + (next_char(parser)  - '0');
     }
 
-    return number;
+    return parser->start != parser->curr;
 }
 
 static inline int is_valid_character(char c, int allow_all) {
@@ -148,9 +149,6 @@ int http_parser_run(struct http_parser* parser, void* data,
                             break;
                         case PARSER_HEADER_VALUE_END:
                             next_state = PARSER_HEADER_START;
-                            break;
-                        case PARSER_HEADERS_DONE: // TODO(Rax): useless
-                            next_state = PARSER_CRLF;
                             break;
                         default:
                             next_state = PARSER_ERROR;
@@ -210,7 +208,13 @@ int http_parser_run(struct http_parser* parser, void* data,
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MAJOR:
-                parser->http_major = parse_integer(parser); // TODO(Rax): error checking
+
+                if(!isdigit(peek(parser))) {
+                    update_parser_state(parser, PARSER_ERROR);
+                    break;
+                }
+
+                parser->http_major = next_char(parser) - '0';
                 update_parser_state(parser, PARSER_HTTP_DOT);
                 break;
             case PARSER_HTTP_DOT:
@@ -219,12 +223,22 @@ int http_parser_run(struct http_parser* parser, void* data,
                                     : PARSER_ERROR);
                 break;
             case PARSER_HTTP_MINOR:
-                parser->http_minor = parse_integer(parser); // TODO(Rax): error checking
+
+                if(!isdigit(peek(parser))) {
+                    update_parser_state(parser, PARSER_ERROR);
+                    break;
+                }
+
+                parser->http_minor = next_char(parser) - '0';
                 update_parser_state(parser, is_request ? PARSER_CRLF : PARSER_SP);
                 break;
             case PARSER_RES_STATUS:
-                parser->status = parse_integer(parser); // TODO(Rax): error checking
-                update_parser_state(parser, PARSER_SP);
+                if(parse_integer(parser, &parser->status)) {
+                    update_parser_state(parser, PARSER_SP);
+                } else {
+                    update_parser_state(parser, PARSER_ERROR);
+                }
+
                 break;
             case PARSER_RES_REASON:
                 while(peek(parser) != '\r' && !is_at_end(parser)) {
@@ -237,8 +251,6 @@ int http_parser_run(struct http_parser* parser, void* data,
                 break;
             case PARSER_REQ_METHOD: {
                 char c = next_char(parser);
-
-                // TODO(Rax): this could be faster
 
                 switch(c) {
                     case 'C':
@@ -276,7 +288,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                                 ? HTTP_PUT
                                 : HTTP_INVALID;
                         } else {
-                            parser->method = match_chars(parser, "OST")
+                            parser->method = match_chars(parser, "ST")
                                 ? HTTP_POST
                                 : HTTP_INVALID;
                         }
