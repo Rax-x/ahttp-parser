@@ -5,15 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct http_parser http_parser_init(const char* source, 
-                                    int length,
-                                    void* data,
-                                    ahttp_data_cb on_req_uri,
-                                    ahttp_event_cb on_header,
-                                    ahttp_data_cb on_header_name,
-                                    ahttp_data_cb on_header_value,
-                                    ahttp_event_cb on_headers_done,
-                                    ahttp_data_cb on_body) {
+struct http_parser http_parser_init(const char* source, int length) {
 
     struct http_parser parser;
 
@@ -29,15 +21,7 @@ struct http_parser http_parser_init(const char* source,
     parser.status = -1;
     parser.method = HTTP_INVALID;
 
-    
-    parser.on_req_uri = on_req_uri;
-
-    parser.on_header = on_header;
-    parser.on_header_value = on_header_value;
-    parser.on_headers_done = on_headers_done;
-    parser.on_body = on_body;
-
-    parser.data = data;
+    parser.data = NULL;
     parser.error = 0;
 
     return parser;
@@ -59,8 +43,6 @@ inline enum http_method http_parser_method(struct http_parser* parser) {
     return parser->method;
 }
 
-
-
 static inline int is_at_end(struct http_parser* parser) {
     return (parser->curr - parser->source) >= parser->length;
 }
@@ -75,7 +57,7 @@ static inline char peek(struct http_parser* parser) {
     return *parser->curr;
 }
 
-static int match(struct http_parser* parser, char c) {
+static inline int match(struct http_parser* parser, char c) {
     if(peek(parser) == c) {
         next_char(parser);
         return 1;
@@ -86,17 +68,15 @@ static int match(struct http_parser* parser, char c) {
 
 static int match_chars(struct http_parser* parser, const char* chars) {
 
-    int status = 1;
-    
-    while(*chars && status != 0) {
+    while(*chars) {
         if(!match(parser, *chars)) {
-            status = 0;
+            return 0;
         }
 
         chars++;
     }
     
-    return status;
+    return 1;
 }
 
 static inline void update_parser_state(struct http_parser* parser, 
@@ -111,8 +91,6 @@ static int parse_integer(struct http_parser* parser) {
     while(isdigit(peek(parser)) && !is_at_end(parser)) {
         number = (number * 10) + (next_char(parser)  - '0');
     }
-
-    // TODO(Rax): check if is at the end
 
     return number;
 }
@@ -134,9 +112,12 @@ static void parse_string(struct http_parser* parser, int allow_all) {
 #define MARK_START(parser) (parser->start = parser->curr)
 #define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
-int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
+int http_parser_run(struct http_parser* parser, void* data,
+                    struct http_parser_settings* settings, 
+                    enum http_parser_type type) {
 
     const int is_request = (type == HTTP_PARSER_REQUEST);
+    parser->data = data;
 
     while (parser->current_state != PARSER_END) {
 
@@ -326,8 +307,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
                     next_char(parser);
                 }
 
-                if(parser->on_req_uri != NULL) {
-                    parser->on_req_uri(parser, parser->start, CALC_DATA_LENGTH(parser));
+                if(settings->on_req_uri != NULL) {
+                    settings->on_req_uri(parser, parser->start, CALC_DATA_LENGTH(parser));
                 }
 
                 update_parser_state(parser, PARSER_SP);
@@ -342,8 +323,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
                     break;
                 }
 
-                if(parser->on_header != NULL) {
-                    parser->on_header(parser);
+                if(settings->on_header != NULL) {
+                    settings->on_header(parser);
                 }
 
                 update_parser_state(parser, PARSER_HEADER_NAME_START);
@@ -361,8 +342,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
 
                 const int header_name_length = CALC_DATA_LENGTH(parser);
                 
-                if(parser->on_header_name != NULL) {
-                    parser->on_header_name(parser, parser->start, header_name_length);
+                if(settings->on_header_name != NULL) {
+                    settings->on_header_name(parser, parser->start, header_name_length);
                 }
                 
                 update_parser_state(parser, PARSER_HEADER_COLON);
@@ -406,8 +387,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
 
                 const int header_value_length = CALC_DATA_LENGTH(parser) - 2; // exclude \r\n
 
-                if(parser->on_header_value != NULL) {
-                    parser->on_header_value(parser, parser->start, header_value_length);
+                if(settings->on_header_value != NULL) {
+                    settings->on_header_value(parser, parser->start, header_value_length);
                 }
 
                 update_parser_state(parser, PARSER_HEADER_START);
@@ -415,8 +396,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
             }
             case PARSER_HEADERS_DONE:
 
-                if(parser->on_headers_done != NULL) {
-                    parser->on_headers_done(parser);
+                if(settings->on_headers_done != NULL) {
+                    settings->on_headers_done(parser);
                 }
 
                 update_parser_state(parser, PARSER_CRLF);
@@ -430,8 +411,8 @@ int http_parser_run(struct http_parser* parser, enum http_parser_type type) {
                 const int body_length = parser->length - (int)(parser->start - parser->source);
                 parser->curr += body_length; // it reaches the end of the buffer
 
-                if(parser->on_body != NULL) {
-                    parser->on_body(parser, parser->start, body_length);
+                if(settings->on_body != NULL) {
+                    settings->on_body(parser, parser->start, body_length);
                 }
 
                 update_parser_state(parser, PARSER_END);

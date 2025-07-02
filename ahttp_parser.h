@@ -80,15 +80,6 @@ struct http_parser {
     enum http_parser_state current_state;
     enum http_parser_state prev_state;
 
-    ahttp_event_cb on_header;
-    ahttp_event_cb on_headers_done;
-
-    ahttp_data_cb on_req_uri;
-
-    ahttp_data_cb on_header_name;
-    ahttp_data_cb on_header_value;
-    ahttp_data_cb on_body;
-
     short int http_major;
     short int http_minor;
 
@@ -100,22 +91,27 @@ struct http_parser {
     void* data;
 };
 
+struct http_parser_settings {
+    ahttp_data_cb on_req_uri;
+
+    ahttp_event_cb on_header;
+    ahttp_data_cb on_header_name;
+    ahttp_data_cb on_header_value;
+    ahttp_event_cb on_headers_done;
+
+    ahttp_data_cb on_body;
+};
+
 int http_parser_minor_version(struct http_parser* parser);
 int http_parser_major_version(struct http_parser* parser);
 short int http_parser_status_code(struct http_parser* parser);
 enum http_method http_parser_method(struct http_parser* parser);
 
-struct http_parser http_parser_init(const char* source, 
-                                    int length,
-                                    void* data,
-                                    ahttp_data_cb on_req_uri,
-                                    ahttp_event_cb on_header,
-                                    ahttp_data_cb on_header_name,
-                                    ahttp_data_cb on_header_value,
-                                    ahttp_event_cb on_headers_done,
-                                    ahttp_data_cb on_body);
+struct http_parser http_parser_init(const char* source, int length);
 
-int http_parser_run(struct http_parser* parser,
+int http_parser_run(struct http_parser* parser, 
+                    void* data,
+                    struct http_parser_settings* settings,
                     enum http_parser_type type);
 
 #ifdef __cplusplus

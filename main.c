@@ -146,16 +146,17 @@ int main() {
     struct http_response response = {0};
 
     struct http_parser parser = http_parser_init(mock_response, 
-                                                 strlen(mock_response), 
-                                                 &response, 
-                                                 NULL,
+                                                 strlen(mock_response));
+
+    struct http_parser_settings settings = {NULL,
                                                  on_new_header, 
                                                  on_header_name, 
                                                  on_header_value,
                                                  on_headers_done,
-                                                 on_body);
+                                                 on_body};
 
-    http_parser_run(&parser, HTTP_PARSER_REQUEST);
+
+    http_parser_run(&parser, &response, &settings, HTTP_PARSER_RESPONSE);
                      
     puts(response.body);
     for(struct http_header* header = response.headers; 
