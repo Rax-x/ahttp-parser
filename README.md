@@ -232,7 +232,7 @@ Executes the parsing process.
 ---
 
 ```c
-  bool parser_had_error(http_parser* parser);
+  bool parser_had_error(const http_parser* restrict parser);
 ```
 
 Checks if the parser encountered an error during its last `http_parser_run` call.
@@ -245,7 +245,7 @@ Checks if the parser encountered an error during its last `http_parser_run` call
 ---
 
 ```c
-  const char* parser_get_error(http_parser* parser);
+  const char* parser_get_error(const http_parser* restrict parser);
 ```
 Retrieves a human-readable string representation of the last error that occurred in the parser.
 
@@ -257,7 +257,7 @@ Retrieves a human-readable string representation of the last error that occurred
 ---
 
 ```c
-  int parser_http_major_version(http_parser* parser);
+  uint8_t parser_http_major_version(const http_parser* restrict parser);
 ```
 
 Retrieves the HTTP major version number from a parsed message.
@@ -270,7 +270,7 @@ Retrieves the HTTP major version number from a parsed message.
 ---
 
 ```c
-  int parser_http_minor_version(http_parser* parser);
+  uint8_t parser_http_minor_version(const http_parser* restrict parser);
 ```
 
 Retrieves the HTTP minor version number from a parsed message.
@@ -283,7 +283,7 @@ Retrieves the HTTP minor version number from a parsed message.
 ---
 
 ```
-  short int parser_http_status_code(http_parser* parser);
+  int parser_http_status_code(const http_parser* restrict parser);
 ```
 Retrieves the HTTP status code from a parsed response message.
 
@@ -295,7 +295,7 @@ Retrieves the HTTP status code from a parsed response message.
 ---
 
 ```c
-  http_method parser_http_method(http_parser* parser);
+  http_method parser_http_method(const http_parser* restrict parser);
 ```
 
 Retrieves the HTTP method from a parsed request message.
