@@ -1,13 +1,70 @@
 #include "ahttp_parser.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct http_parser http_parser_init(const char* source, int length) {
+typedef enum http_parser_state {
+    PARSER_START,
 
-    struct http_parser parser;
+    PARSER_SP,
+    PARSER_CRLF,
+
+    PARSER_START_RES,
+    PARSER_START_REQ,
+
+    PARSER_HTTP,
+    PARSER_HTTP_SLASH,
+    PARSER_HTTP_MAJOR,
+    PARSER_HTTP_DOT,
+    PARSER_HTTP_MINOR,
+
+    PARSER_RES_STATUS,
+    PARSER_RES_REASON,
+
+    PARSER_REQ_METHOD,
+    PARSER_REQ_URI,
+
+    PARSER_HEADERS,
+    PARSER_HEADER_START,
+    PARSER_HEADER_NAME_START,
+    PARSER_HEADER_NAME,
+    PARSER_HEADER_NAME_END,
+    PARSER_HEADER_COLON,
+    PARSER_HEADER_VALUE_START,
+    PARSER_HEADER_VALUE,
+    PARSER_HEADER_VALUE_LWS,
+    PARSER_HEADER_VALUE_END,
+    PARSER_HEADERS_DONE,
+
+    PARSER_BODY_START,
+    PARSER_BODY,
+
+    PARSER_END,
+} http_parser_state;
+
+enum http_parser_error {
+    PARSER_NO_ERROR,
+
+    PARSER_EXPECT_SPACE,
+    PARSER_EXPECT_CRLF,
+    PARSER_INVALID_STATE,
+    PARSER_MALFORMED_HTTP_VERSION,
+    PARSER_INVALID_STATUS_CODE,
+    PARSER_INVALID_HTTP_METHOD,
+    PARSER_EXPECT_NUMBER,
+    PARSER_EXPECT_COLON,
+    PARSER_EXPECT_HEADER_VALUE
+};
+
+http_parser http_parser_init(const char* source, int length) {
+
+    http_parser parser;
 
     parser.source = source;
     parser.length = length;
@@ -22,42 +79,66 @@ struct http_parser http_parser_init(const char* source, int length) {
     parser.method = HTTP_INVALID;
 
     parser.data = NULL;
-    parser.error = PARSER_NO_ERROR;
+    parser.errno = PARSER_NO_ERROR;
 
     return parser;
 }
 
-inline int http_parser_minor_version(struct http_parser* parser) {
+inline int parser_http_minor_version(http_parser* parser) {
     return parser->http_minor;
 }
 
-inline int http_parser_major_version(struct http_parser* parser) {
+inline int parser_http_major_version(http_parser* parser) {
     return parser->http_major;
 }
 
-inline short int http_parser_status_code(struct http_parser* parser) {
+inline short int parser_http_status_code(http_parser* parser) {
     return parser->status;
 }
 
-inline enum http_method http_parser_method(struct http_parser* parser) {
+inline http_method parser_http_method(http_parser* parser) {
     return parser->method;
 }
 
-static inline bool is_at_end(struct http_parser* parser) {
+inline bool parser_had_error(http_parser* parser) {
+    return parser->errno != PARSER_NO_ERROR;
+}
+
+inline const char* parser_get_error(http_parser* parser) {
+
+    static const char *const http_parser_error_strings[] = {
+        [PARSER_NO_ERROR] = "No error",
+        [PARSER_EXPECT_SPACE] = "Expected a space character",
+        [PARSER_EXPECT_CRLF] = "Expected carriage return (CR) or line feed (LF)",
+        [PARSER_INVALID_STATE] = "Parser is in an invalid state",
+        [PARSER_MALFORMED_HTTP_VERSION] = "HTTP version string is malformed (e.g., 'HTTP/x.y' expected)",
+        [PARSER_INVALID_STATUS_CODE] = "Invalid HTTP status code",
+        [PARSER_INVALID_HTTP_METHOD] = "Invalid HTTP method",
+        [PARSER_EXPECT_NUMBER] = "Expected a number",
+        [PARSER_EXPECT_COLON] = "Expected a colon character (':')",
+        [PARSER_EXPECT_HEADER_VALUE] = "Expected a header value"
+    };
+
+    return http_parser_error_strings[parser->errno];
+}
+
+/* >>> Parser related functions  */
+
+static inline bool is_at_end(http_parser* parser) {
     return (parser->curr - parser->source) >= parser->length;
 }
 
-static char next_char(struct http_parser* parser) {
+static inline char next_char(http_parser* parser) {
     return !is_at_end(parser)
         ? *parser->curr++
         : '\0';
 }
 
-static inline char peek(struct http_parser* parser) {
+static inline char peek(http_parser* parser) {
     return *parser->curr;
 }
 
-static inline bool match(struct http_parser* parser, char c) {
+static inline bool match(http_parser* parser, char c) {
     if(peek(parser) == c) {
         next_char(parser);
         return true;
@@ -66,7 +147,7 @@ static inline bool match(struct http_parser* parser, char c) {
     return false;
 }
 
-static bool match_chars(struct http_parser* parser, const char* chars) {
+static bool match_chars(http_parser* parser, const char* chars) {
 
     while(*chars) {
         if(!match(parser, *chars)) {
@@ -79,13 +160,13 @@ static bool match_chars(struct http_parser* parser, const char* chars) {
     return true;
 }
 
-static inline void update_parser_state(struct http_parser* parser, 
-                                       enum http_parser_state state) {
+static inline void update_parser_state(http_parser* parser,
+                                       http_parser_state state) {
     parser->prev_state = parser->current_state;
     parser->current_state = state;
 }
 
-static int parse_integer(struct http_parser* parser, int* result) {
+static int parse_integer(http_parser* parser, int* result) {
 
     parser->start = parser->curr;
 
@@ -102,25 +183,28 @@ static inline bool is_valid_character(char c, bool allow_all) {
         : (isalnum(c) || c == '-');
 }
 
-static void parse_string(struct http_parser* parser, bool allow_all) {
+static void parse_string(http_parser* parser, bool allow_all) {
 
     while(is_valid_character(peek(parser), allow_all) && !is_at_end(parser)) {
         next_char(parser);
     }
 }
 
+/* <<< End Parser related functions */
+
 #define GET_PARSED_BYTES(parser) ((int)((parser)->curr - (parser)->source))
 #define THROW_ERROR(parser, err) do {           \
-        (parser)->error = (err);                \
+        (parser)->errno = (err);              \
         return GET_PARSED_BYTES(parser);        \
     } while(0)
 
 #define MARK_START(parser) (parser->start = parser->curr)
 #define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
-int http_parser_run(struct http_parser* parser, void* data,
-                    struct http_parser_settings* settings, 
-                    enum http_parser_type type) {
+int http_parser_run(http_parser* parser,
+                    void* data,
+                    http_parser_settings* settings,
+                    http_parser_type type) {
 
     const int is_request = (type == HTTP_PARSER_REQUEST);
     parser->data = data;
@@ -137,7 +221,7 @@ int http_parser_run(struct http_parser* parser, void* data,
 
                 if(match(parser, ' ')) {
 
-                    enum http_parser_state next_state;
+                    http_parser_state next_state;
 
                     switch(parser->prev_state) {
                         case PARSER_HTTP_MINOR:
@@ -168,7 +252,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                 break;
             case PARSER_CRLF:
                 if(match_chars(parser, "\r\n")) {
-                    enum http_parser_state next_state;
+                    http_parser_state next_state;
 
                     switch(parser->prev_state) {
                         case PARSER_CRLF:
@@ -459,23 +543,6 @@ int http_parser_run(struct http_parser* parser, void* data,
     return GET_PARSED_BYTES(parser);
 }
 
-inline bool parser_had_error(struct http_parser* parser) {
-    return parser->error != PARSER_NO_ERROR;
+#ifdef __cplusplus
 }
-
-inline const char* parser_get_error(struct http_parser* parser) {
-    static const char *const http_parser_error_strings[] = {
-        [PARSER_NO_ERROR] = "No error",
-        [PARSER_EXPECT_SPACE] = "Expected a space character",
-        [PARSER_EXPECT_CRLF] = "Expected carriage return (CR) or line feed (LF)",
-        [PARSER_INVALID_STATE] = "Parser is in an invalid state",
-        [PARSER_MALFORMED_HTTP_VERSION] = "HTTP version string is malformed (e.g., 'HTTP/x.y' expected)",
-        [PARSER_INVALID_STATUS_CODE] = "Invalid HTTP status code",
-        [PARSER_INVALID_HTTP_METHOD] = "Invalid HTTP method",
-        [PARSER_EXPECT_NUMBER] = "Expected a number",
-        [PARSER_EXPECT_COLON] = "Expected a colon character (':')",
-        [PARSER_EXPECT_HEADER_VALUE] = "Expected a header value"
-    };
-
-    return http_parser_error_strings[parser->error];
-}
+#endif

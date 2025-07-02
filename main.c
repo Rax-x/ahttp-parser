@@ -170,9 +170,9 @@ int main() {
     }
     
     printf("Method: %d, major: %d, minor: %d\n",
-           http_parser_method(&parser),
-           http_parser_major_version(&parser),
-           http_parser_minor_version(&parser));
+           parser_http_method(&parser),
+           parser_http_major_version(&parser),
+           parser_http_minor_version(&parser));
 
     destroy_http_response(&response);
 
