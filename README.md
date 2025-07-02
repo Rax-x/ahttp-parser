@@ -6,16 +6,25 @@ or they are simply not easy to use or integrate **into** projects.
 
 This library is written in **C99** and **implements** just the basic features, following **RFC 2616**.
 
->[!WARNING]
-> This library is still **WORKING IN PROGRESS**!
+>[!TIP]
+> Node.js's [http-parser](https://github.com/nodejs/http-parser) and [llhttp](https://github.com/nodejs/llhttp) served as key inspirations for the design of this library.
 
-## Features
+## 🌟 Features
 - Parses both HTTP **Response** and **Request** messages.
 - **Event-driven** design using callbacks for flexible handling of parsed data (headers, body, etc.).
 - Small footprint and minimal dependencies.
 - Follows the **RFC 2616** standard.
 
-## Example
+## 🔥 Benchmark
+
+```
+request length = 518
+
+Benchmark result:
+8192.00 mb | 755.18 mb/s | 1528697.60 req/sec | 10.85 s
+```
+
+## 🧮 Example
 ```c
 
 #include <stdio.h>
@@ -132,7 +141,7 @@ int main() {
 
 ```
 
-# API
+# 📔 API
 
 ## Data Types
 
