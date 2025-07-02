@@ -303,7 +303,7 @@ Retrieves the HTTP method from a parsed request message.
 **Parameters**:
 - `parser`: A pointer to the `http_parser` instance.
 
-**Returns**: An http_method enum value. (Only valid for HTTP_PARSER_REQUEST type)
+**Returns**: An http_method enum value. **(Only valid for `HTTP_PARSER_REQUEST` type)**
 
 # References
 
