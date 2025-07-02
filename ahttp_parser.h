@@ -2,6 +2,7 @@
 #define _AHTTP_PARSER_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,7 +57,6 @@ enum http_parser_state {
     PARSER_BODY_START,
     PARSER_BODY,
 
-    PARSER_ERROR,
     PARSER_END,
 };
 
@@ -68,6 +68,20 @@ typedef void (*ahttp_data_cb)(struct http_parser*, const char* at, int length);
 enum http_parser_type {
     HTTP_PARSER_RESPONSE,
     HTTP_PARSER_REQUEST
+};
+
+enum http_parser_error {
+    PARSER_NO_ERROR,
+
+    PARSER_EXPECT_SPACE,
+    PARSER_EXPECT_CRLF,
+    PARSER_INVALID_STATE,
+    PARSER_MALFORMED_HTTP_VERSION,
+    PARSER_INVALID_STATUS_CODE,
+    PARSER_INVALID_HTTP_METHOD,
+    PARSER_EXPECT_NUMBER,
+    PARSER_EXPECT_COLON,
+    PARSER_EXPECT_HEADER_VALUE
 };
 
 struct http_parser {
@@ -86,7 +100,7 @@ struct http_parser {
     int status; // only response
     enum http_method method; // only request
 
-    unsigned int error: 1;
+    enum http_parser_error error;
 
     void* data;
 };
@@ -113,6 +127,9 @@ int http_parser_run(struct http_parser* parser,
                     void* data,
                     struct http_parser_settings* settings,
                     enum http_parser_type type);
+
+bool parser_had_error(struct http_parser* parser);
+const char* parser_get_error(struct http_parser* parser);
 
 #ifdef __cplusplus
 }

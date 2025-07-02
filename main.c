@@ -155,8 +155,12 @@ int main() {
                                                  on_headers_done,
                                                  on_body};
 
-
     http_parser_run(&parser, &response, &settings, HTTP_PARSER_RESPONSE);
+    if(parser_had_error(&parser)) {
+        printf("Error: %s\n", parser_get_error(&parser));
+        exit(EXIT_FAILURE);
+    }
+
                      
     puts(response.body);
     for(struct http_header* header = response.headers; 

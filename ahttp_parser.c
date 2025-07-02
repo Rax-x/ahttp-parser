@@ -22,7 +22,7 @@ struct http_parser http_parser_init(const char* source, int length) {
     parser.method = HTTP_INVALID;
 
     parser.data = NULL;
-    parser.error = 0;
+    parser.error = PARSER_NO_ERROR;
 
     return parser;
 }
@@ -43,7 +43,7 @@ inline enum http_method http_parser_method(struct http_parser* parser) {
     return parser->method;
 }
 
-static inline int is_at_end(struct http_parser* parser) {
+static inline bool is_at_end(struct http_parser* parser) {
     return (parser->curr - parser->source) >= parser->length;
 }
 
@@ -57,26 +57,26 @@ static inline char peek(struct http_parser* parser) {
     return *parser->curr;
 }
 
-static inline int match(struct http_parser* parser, char c) {
+static inline bool match(struct http_parser* parser, char c) {
     if(peek(parser) == c) {
         next_char(parser);
-        return 1;
+        return true;
     }
 
-    return 0;
+    return false;
 }
 
-static int match_chars(struct http_parser* parser, const char* chars) {
+static bool match_chars(struct http_parser* parser, const char* chars) {
 
     while(*chars) {
         if(!match(parser, *chars)) {
-            return 0;
+            return false;
         }
 
         chars++;
     }
     
-    return 1;
+    return true;
 }
 
 static inline void update_parser_state(struct http_parser* parser, 
@@ -96,20 +96,25 @@ static int parse_integer(struct http_parser* parser, int* result) {
     return parser->start != parser->curr;
 }
 
-static inline int is_valid_character(char c, int allow_all) {
+static inline bool is_valid_character(char c, bool allow_all) {
     return allow_all 
         ? isprint(c)
         : (isalnum(c) || c == '-');
 }
 
-static void parse_string(struct http_parser* parser, int allow_all) {
+static void parse_string(struct http_parser* parser, bool allow_all) {
 
     while(is_valid_character(peek(parser), allow_all) && !is_at_end(parser)) {
         next_char(parser);
     }
 }
 
-#define SET_ERROR(p) (update_parser_state((p), PARSER_ERROR))
+#define GET_PARSED_BYTES(parser) ((int)((parser)->curr - (parser)->source))
+#define THROW_ERROR(parser, err) do {           \
+        (parser)->error = (err);                \
+        return GET_PARSED_BYTES(parser);        \
+    } while(0)
+
 #define MARK_START(parser) (parser->start = parser->curr)
 #define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
@@ -129,7 +134,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                                     : PARSER_START_RES);
                 break;
             case PARSER_SP:
-                
+
                 if(match(parser, ' ')) {
 
                     enum http_parser_state next_state;
@@ -151,13 +156,13 @@ int http_parser_run(struct http_parser* parser, void* data,
                             next_state = PARSER_HEADER_START;
                             break;
                         default:
-                            next_state = PARSER_ERROR;
+                            THROW_ERROR(parser, PARSER_INVALID_STATE);
                             break;
                     }
 
                     update_parser_state(parser, next_state);
                 } else {
-                    SET_ERROR(parser);
+                    THROW_ERROR(parser, PARSER_EXPECT_SPACE);
                 }
 
                 break;
@@ -178,13 +183,13 @@ int http_parser_run(struct http_parser* parser, void* data,
                             next_state = PARSER_BODY_START;
                             break;
                         default:
-                            next_state = PARSER_ERROR;
+                            THROW_ERROR(parser, PARSER_INVALID_STATE);
                             break;
                     }
 
                     update_parser_state(parser, next_state);
                 } else {
-                    SET_ERROR(parser);
+                    THROW_ERROR(parser, PARSER_EXPECT_CRLF);
                 }
                 break;
             case PARSER_START_RES:
@@ -198,35 +203,39 @@ int http_parser_run(struct http_parser* parser, void* data,
                 if(match_chars(parser, "HTTP")) {
                     update_parser_state(parser, PARSER_HTTP_SLASH);
                 } else {
-                    SET_ERROR(parser);
+                    THROW_ERROR(parser, PARSER_MALFORMED_HTTP_VERSION);
                 }
 
                 break;
             case PARSER_HTTP_SLASH:
-                update_parser_state(parser, match(parser, '/')
-                                    ? PARSER_HTTP_MAJOR
-                                    : PARSER_ERROR);
+                if(match(parser, '/')) {
+                    update_parser_state(parser, PARSER_HTTP_MAJOR);
+                } else {
+                    THROW_ERROR(parser, PARSER_MALFORMED_HTTP_VERSION);
+                }
+
                 break;
             case PARSER_HTTP_MAJOR:
 
                 if(!isdigit(peek(parser))) {
-                    update_parser_state(parser, PARSER_ERROR);
-                    break;
+                    THROW_ERROR(parser, PARSER_MALFORMED_HTTP_VERSION);
                 }
 
                 parser->http_major = next_char(parser) - '0';
                 update_parser_state(parser, PARSER_HTTP_DOT);
                 break;
             case PARSER_HTTP_DOT:
-                update_parser_state(parser, match(parser, '.')
-                                    ? PARSER_HTTP_MINOR
-                                    : PARSER_ERROR);
+                if(match(parser, '.')){
+                    update_parser_state(parser, PARSER_HTTP_MINOR);
+                } else {
+                    THROW_ERROR(parser, PARSER_MALFORMED_HTTP_VERSION);
+                }
+
                 break;
             case PARSER_HTTP_MINOR:
 
                 if(!isdigit(peek(parser))) {
-                    update_parser_state(parser, PARSER_ERROR);
-                    break;
+                    THROW_ERROR(parser, PARSER_MALFORMED_HTTP_VERSION);
                 }
 
                 parser->http_minor = next_char(parser) - '0';
@@ -236,7 +245,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                 if(parse_integer(parser, &parser->status)) {
                     update_parser_state(parser, PARSER_SP);
                 } else {
-                    update_parser_state(parser, PARSER_ERROR);
+                    THROW_ERROR(parser, PARSER_INVALID_STATUS_CODE);
                 }
 
                 break;
@@ -245,9 +254,11 @@ int http_parser_run(struct http_parser* parser, void* data,
                     next_char(parser);
                 }
 
-                update_parser_state(parser, is_at_end(parser)
-                                    ? PARSER_ERROR
-                                    : PARSER_CRLF);
+                if(is_at_end(parser)) {
+                    THROW_ERROR(parser, PARSER_EXPECT_CRLF);
+                }
+
+                update_parser_state(parser, PARSER_CRLF);
                 break;
             case PARSER_REQ_METHOD: {
                 char c = next_char(parser);
@@ -307,7 +318,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                 if(parser->method != HTTP_INVALID) {
                     update_parser_state(parser, PARSER_SP);
                 } else {
-                    SET_ERROR(parser);
+                    THROW_ERROR(parser, PARSER_INVALID_HTTP_METHOD);
                 }
 
                 break;
@@ -315,8 +326,12 @@ int http_parser_run(struct http_parser* parser, void* data,
             case PARSER_REQ_URI:
 
                 MARK_START(parser);
-                while(peek(parser) != ' ') {
+                while(peek(parser) != ' ' && !is_at_end(parser)) {
                     next_char(parser);
+                }
+
+                if(is_at_end(parser)) {
+                    THROW_ERROR(parser, PARSER_EXPECT_SPACE);
                 }
 
                 if(settings->on_req_uri != NULL) {
@@ -347,7 +362,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                 update_parser_state(parser, PARSER_HEADER_NAME);
                 break;
             case PARSER_HEADER_NAME:
-                parse_string(parser, 0);                
+                parse_string(parser, /* allow_all */ false);
                 update_parser_state(parser, PARSER_HEADER_NAME_END);
                 break;
             case PARSER_HEADER_NAME_END: {
@@ -362,9 +377,12 @@ int http_parser_run(struct http_parser* parser, void* data,
                 break;
             }
             case PARSER_HEADER_COLON:
-                update_parser_state(parser, match(parser, ':')
-                                    ? PARSER_HEADER_VALUE_START
-                                    : PARSER_ERROR);
+                if(match(parser, ':')) {
+                    update_parser_state(parser, PARSER_HEADER_VALUE_START);
+                } else {
+                    THROW_ERROR(parser, PARSER_EXPECT_COLON);
+                }
+
                 break;
             case PARSER_HEADER_VALUE_START:
 
@@ -372,13 +390,16 @@ int http_parser_run(struct http_parser* parser, void* data,
                     next_char(parser);
                 }
 
+
+                if(is_at_end(parser)) {
+                    THROW_ERROR(parser, PARSER_EXPECT_HEADER_VALUE);
+                }
+
                 MARK_START(parser);
-                update_parser_state(parser, is_at_end(parser) 
-                                    ? PARSER_ERROR 
-                                    : PARSER_HEADER_VALUE);
+                update_parser_state(parser, PARSER_HEADER_VALUE);
                 break;
             case PARSER_HEADER_VALUE:
-                parse_string(parser, 1);
+                parse_string(parser, /* allow_all */ true);
                 update_parser_state(parser, PARSER_HEADER_VALUE_LWS);
                 break;
             case PARSER_HEADER_VALUE_LWS: {
@@ -390,7 +411,7 @@ int http_parser_run(struct http_parser* parser, void* data,
                         update_parser_state(parser, PARSER_HEADER_VALUE_END);
                     }
                 } else {
-                    SET_ERROR(parser);
+                    THROW_ERROR(parser, PARSER_EXPECT_CRLF);
                 }
 
                 break;
@@ -430,15 +451,31 @@ int http_parser_run(struct http_parser* parser, void* data,
                 update_parser_state(parser, PARSER_END);
                 break;
             }
-            case PARSER_ERROR:
-                fprintf(stderr, "An error occurred!\n");
-                parser->error = 1;
-                update_parser_state(parser, PARSER_END);
-                break;
             case PARSER_END:
                 break;
         }
     }
    
-    return (int)(parser->curr - parser->source);
+    return GET_PARSED_BYTES(parser);
+}
+
+inline bool parser_had_error(struct http_parser* parser) {
+    return parser->error != PARSER_NO_ERROR;
+}
+
+inline const char* parser_get_error(struct http_parser* parser) {
+    static const char *const http_parser_error_strings[] = {
+        [PARSER_NO_ERROR] = "No error",
+        [PARSER_EXPECT_SPACE] = "Expected a space character",
+        [PARSER_EXPECT_CRLF] = "Expected carriage return (CR) or line feed (LF)",
+        [PARSER_INVALID_STATE] = "Parser is in an invalid state",
+        [PARSER_MALFORMED_HTTP_VERSION] = "HTTP version string is malformed (e.g., 'HTTP/x.y' expected)",
+        [PARSER_INVALID_STATUS_CODE] = "Invalid HTTP status code",
+        [PARSER_INVALID_HTTP_METHOD] = "Invalid HTTP method",
+        [PARSER_EXPECT_NUMBER] = "Expected a number",
+        [PARSER_EXPECT_COLON] = "Expected a colon character (':')",
+        [PARSER_EXPECT_HEADER_VALUE] = "Expected a header value"
+    };
+
+    return http_parser_error_strings[parser->error];
 }
