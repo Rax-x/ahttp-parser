@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,27 +85,27 @@ http_parser http_parser_init(const char* source, int length) {
     return parser;
 }
 
-inline int parser_http_minor_version(http_parser* parser) {
+uint8_t parser_http_minor_version(const http_parser* restrict parser) {
     return parser->http_minor;
 }
 
-inline int parser_http_major_version(http_parser* parser) {
+uint8_t parser_http_major_version(const http_parser* restrict parser) {
     return parser->http_major;
 }
 
-inline short int parser_http_status_code(http_parser* parser) {
+int parser_http_status_code(const http_parser* restrict parser) {
     return parser->status;
 }
 
-inline http_method parser_http_method(http_parser* parser) {
+http_method parser_http_method(const http_parser* restrict parser) {
     return parser->method;
 }
 
-inline bool parser_had_error(http_parser* parser) {
+bool parser_had_error(const http_parser* restrict parser) {
     return parser->errno != PARSER_NO_ERROR;
 }
 
-inline const char* parser_get_error(http_parser* parser) {
+const char* parser_get_error(const http_parser* restrict parser) {
 
     static const char *const http_parser_error_strings[] = {
         [PARSER_NO_ERROR] = "No error",
@@ -124,21 +125,21 @@ inline const char* parser_get_error(http_parser* parser) {
 
 /* >>> Parser related functions  */
 
-static inline bool is_at_end(http_parser* parser) {
+static inline bool is_at_end(const http_parser* restrict parser) {
     return (parser->curr - parser->source) >= parser->length;
 }
 
-static inline char next_char(http_parser* parser) {
+static inline char next_char(http_parser* restrict parser) {
     return !is_at_end(parser)
         ? *parser->curr++
         : '\0';
 }
 
-static inline char peek(http_parser* parser) {
+static inline char peek(const http_parser* restrict parser) {
     return *parser->curr;
 }
 
-static inline bool match(http_parser* parser, char c) {
+static inline bool match(http_parser* restrict parser, char c) {
     if(peek(parser) == c) {
         next_char(parser);
         return true;
@@ -147,7 +148,7 @@ static inline bool match(http_parser* parser, char c) {
     return false;
 }
 
-static bool match_chars(http_parser* parser, const char* chars) {
+static bool match_chars(http_parser* restrict parser, const char* chars) {
 
     while(*chars) {
         if(!match(parser, *chars)) {
@@ -160,13 +161,13 @@ static bool match_chars(http_parser* parser, const char* chars) {
     return true;
 }
 
-static inline void update_parser_state(http_parser* parser,
+static inline void update_parser_state(http_parser* restrict parser,
                                        http_parser_state state) {
     parser->prev_state = parser->current_state;
     parser->current_state = state;
 }
 
-static int parse_integer(http_parser* parser, int* result) {
+static int parse_integer(http_parser* restrict parser, int* result) {
 
     parser->start = parser->curr;
 
@@ -183,7 +184,7 @@ static inline bool is_valid_character(char c, bool allow_all) {
         : (isalnum(c) || c == '-');
 }
 
-static void parse_string(http_parser* parser, bool allow_all) {
+static void parse_string(http_parser* restrict parser, bool allow_all) {
 
     while(is_valid_character(peek(parser), allow_all) && !is_at_end(parser)) {
         next_char(parser);
@@ -201,7 +202,7 @@ static void parse_string(http_parser* parser, bool allow_all) {
 #define MARK_START(parser) (parser->start = parser->curr)
 #define CALC_DATA_LENGTH(parser) ((int)((parser)->curr - (parser)->start))
 
-int http_parser_run(http_parser* parser,
+int http_parser_run(http_parser* restrict parser,
                     void* data,
                     http_parser_settings* settings,
                     http_parser_type type) {

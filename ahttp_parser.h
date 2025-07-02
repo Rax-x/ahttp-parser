@@ -2,7 +2,18 @@
 #define _AHTTP_PARSER_H_
 
 #ifdef __cplusplus
+
 extern "C" {
+
+    #if defined(__clang__)
+        #define restrict __restrict__
+    #elif defined(__GNUC__) || defined(__GNUG__)
+        #define restrict __restrict__
+    #elif defined(_MSC_VER)
+        #define restrict __restrict
+    #else
+        #define restrict
+    #endif
 #endif
 
 #include <stdint.h>
@@ -63,20 +74,20 @@ typedef struct http_parser_settings {
     ahttp_data_cb on_body;
 } http_parser_settings;
 
-int parser_http_minor_version(http_parser* parser);
-int parser_http_major_version(http_parser* parser);
-short int parser_http_status_code(http_parser* parser);
-http_method parser_http_method(http_parser* parser);
+uint8_t parser_http_minor_version(const http_parser* restrict parser);
+uint8_t parser_http_major_version(const http_parser* restrict parser);
+int parser_http_status_code(const http_parser* restrict parser);
+http_method parser_http_method(const http_parser* restrict parser);
 
 http_parser http_parser_init(const char* source, int length);
 
-int http_parser_run(http_parser* parser, 
+int http_parser_run(http_parser* restrict parser, 
                     void* data,
                     http_parser_settings* settings,
                     http_parser_type type);
 
-bool parser_had_error(http_parser* parser);
-const char* parser_get_error(http_parser* parser);
+bool parser_had_error(const http_parser* restrict parser);
+const char* parser_get_error(const http_parser* restrict parser);
 
 #ifdef __cplusplus
 }
